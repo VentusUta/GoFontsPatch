@@ -1,0 +1,34 @@
+name: Build Go fonts
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Fetch upstream repository
+        run: git clone --depth=1 https://go.googlesource.com/image
+
+      - name: Extract TTFs (except Smallcaps) to build/
+        run: |
+          mkdir -p build
+          find image/font/gofont/ttfs -name '*.ttf' ! -name '*Smallcaps*' -exec cp {} build/ \;
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install fontTools
+        run: pip install fonttools
+
+      - name: Patch fonts
+        run: python3 patch.py build build/gofonts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gofonts
+          path: build/gofonts
