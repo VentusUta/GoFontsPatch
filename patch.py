@@ -3,19 +3,18 @@
 Patch the Go fonts (golang.org/x/image/font/gofont/ttfs, v2.010).
 
 1. Remove TrueType hinting (fontTools only, no ttfautohint / pyftsubset),
-   remove the unencoded glyphs zero.dot / zero.empty and U+212E (estimated),
+   remove the unencoded glyphs zero.dot / zero.empty,
    drop the legacy Mac (platform 1) cmap subtable and name records,
-   set version to 3.001.
+   set version to 3.002.
 2. Fix Medium naming (nameID 16/17) and unify PostScript names.
 3. Set usWeightClass = 700 for all Bold / Bold Italic faces.
-4. Go (proportional): add a GSUB 'liga' feature, f i -> fi (U+FB01), f l -> fl (U+FB02).
-   Go Mono: no ligatures; U+FB01 / U+FB02 and their glyphs are removed instead.
+4. Move U+00B7 (periodcentered) to y = 740 (half the cap height 1480).
 
 Usage: python3 patch.py SRC_DIR OUT_DIR
 """
+import math
 import os
 import sys
-from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.ttLib import TTFont
 
 # file -> (PostScript name, typographic family, typographic subfamily or None)
@@ -32,19 +31,8 @@ FONTS = {
     "Go-Mono-Bold-Italic.ttf": ("GoMono-BoldItalic", "Go Mono", None),
 }
 DROP_GLYPHS = {"zero.dot", "zero.empty"}
-DROP_CODEPOINTS = {0x212E}  # ESTIMATED SYMBOL; its glyph is dropped too
-MONO_DROP_CODEPOINTS = {0xFB01, 0xFB02}  # fi / fl: a ligature cannot fit one mono cell
-LIGA_FEA = """
-languagesystem DFLT dflt;
-languagesystem latn dflt;
-
-feature liga {
-    sub f i by %(fi)s;
-    sub f l by %(fl)s;
-} liga;
-"""
 HINT_TABLES = ("fpgm", "prep", "cvt ", "hdmx", "LTSH", "VDMX")
-VERSION = 3.001
+VERSION = 3.002
 PLATFORMS = [(3, 1, 0x409)]  # Windows Unicode / en-US only
 
 
@@ -71,16 +59,6 @@ def remove_hinting(font):
     font["gasp"].gaspRange = {0xFFFF: 0x000A}
 
 
-def unmap_codepoints(font, codepoints):
-    """Remove codepoints from every cmap subtable; return the glyph names they used."""
-    names = set()
-    for sub in font["cmap"].tables:
-        for cp in codepoints:
-            if cp in sub.cmap:
-                names.add(sub.cmap.pop(cp))
-    return names
-
-
 def drop_mac_cmap(font):
     """Remove the legacy Mac Roman (platform 1) cmap subtable."""
     cmap = font["cmap"]
@@ -91,11 +69,6 @@ def drop_mac_names(font):
     """Remove the legacy Mac (platform 1) name records."""
     name = font["name"]
     name.names = [n for n in name.names if n.platformID != 1]
-
-
-def add_ligatures(font):
-    cmap = font.getBestCmap()
-    addOpenTypeFeaturesFromString(font, LIGA_FEA % {"fi": cmap[0xFB01], "fl": cmap[0xFB02]})
 
 
 def remove_glyphs(font, drop):
@@ -128,6 +101,21 @@ def remove_glyphs(font, drop):
         post.mapping = {}
 
 
+DOT_CENTER = 740  # half of the cap height 1480 shared by every Go font
+
+
+def center_middle_dot(font):
+    """Move U+00B7 so its vertical center sits at DOT_CENTER; shift along the italic slant."""
+    cmap = font.getBestCmap()
+    glyf = font["glyf"]
+    dot = glyf[cmap[0xB7]]
+    dy = DOT_CENTER - (dot.yMin + dot.yMax) // 2
+    dx = round(-dy * math.tan(math.radians(font["post"].italicAngle)))
+    dot.coordinates.translate((dx, dy))
+    dot.recalcBounds(glyf)
+    font["hmtx"][cmap[0xB7]] = (font["hmtx"][cmap[0xB7]][0], dot.xMin)
+
+
 def set_version(font, version):
     font["head"].fontRevision = version
     set_name(font, 5, f"Version {version:.3f}")
@@ -142,11 +130,8 @@ def main(src, out):
         remove_hinting(font)
         drop_mac_cmap(font)
         drop_mac_names(font)
-        is_mono = typo_family == "Go Mono"
-        codepoints = DROP_CODEPOINTS | (MONO_DROP_CODEPOINTS if is_mono else set())
-        remove_glyphs(font, DROP_GLYPHS | unmap_codepoints(font, codepoints))
-        if not is_mono:
-            add_ligatures(font)
+        remove_glyphs(font, DROP_GLYPHS)
+        center_middle_dot(font)
         set_version(font, VERSION)
 
         set_name(font, 6, ps_name)

@@ -26,9 +26,9 @@ jobs:
         run: pip install fonttools
 
       - name: Patch fonts
-        run: python3 patch.py build build/gofonts
+        run: python3 patch.py build build/GoFonts
 
       - uses: actions/upload-artifact@v7
         with:
-          name: gofonts
-          path: build/gofonts
+          name: GoFonts
+          path: build/GoFonts
